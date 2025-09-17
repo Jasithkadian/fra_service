@@ -25,22 +25,22 @@ def main():
                 result = predict_land_use(image_bytes)
                 
                 # Results
-                print("\n📊 Classification Results:")
+                print("\nClassification Results:")
                 print("-" * 30)
                 for category, percentage in result.items():
                     print(f"  {category}: {percentage:.2f}%")
                     
             except Exception as e:
-                print(f"❌ Error processing image: {e}")
+                print(f"Error processing image: {e}")
         else:
-            print(f"❌ Image file not found: {image_path}")
+            print(f"Image file not found: {image_path}")
     else:
         # No image provided, show usage
-        print("\n📖 Usage:")
+        print("\nUsage:")
         print("  python run_classification.py <image_path>")
-        print("\n📝 Example:")
+        print("\nExample:")
         print("  python run_classification.py satellite_image.jpg")
-        print("\n💡 Categories:")
+        print("\nCategories:")
         print("  forest, farmland, water_body, habitation_soil")
 
 if __name__ == "__main__":

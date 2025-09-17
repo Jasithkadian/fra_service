@@ -1,97 +1,136 @@
-"""
-Land Use Classification Module for VanDisha FRA Atlas
-
-This module provides a single, efficient function to classify satellite images
-into 4 categories using a SegFormer model from Hugging Face.
-- forest
-- farmland
-- water_body
-- habitation_soil
-"""
+from __future__ import annotations
 
 import io
-import logging
-from functools import lru_cache
 from typing import Dict, Tuple
 
 import numpy as np
-import torch
 from PIL import Image
-from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
+import torch
+import torch.nn.functional as F
+from transformers import (
+    SegformerFeatureExtractor,
+    SegformerForSemanticSegmentation,
+)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-@lru_cache(maxsize=1)
-def _get_model_and_processor() -> Tuple[SegformerForSemanticSegmentation, SegformerImageProcessor, torch.device]:
+MODEL_NAME = "nvidia/segformer-b0-finetuned-ade-512-512"
+
+
+class LandUseClassifier:
+    """Classifies satellite imagery into 4 land use categories.
+
+    Categories (IDs → names):
+      0 → "forest"
+      1 → "farmland"
+      2 → "water_body"
+      3 → "habitation_soil"
     """
-    Lazily loads and caches the model and processor.
-    """
-    # ✅ Use ESA WorldCover model (not ADE20K)
-    model_name = "ESA/WorldCover_SegFormer"  # <-- replace with the correct HuggingFace repo ID if different
-    logger.info(f"Loading model '{model_name}' for the first time...")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    processor = SegformerImageProcessor.from_pretrained(model_name)
-    model = SegformerForSemanticSegmentation.from_pretrained(model_name)
-    model.to(device)
-    model.eval()
+    def __init__(self) -> None:
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.feature_extractor = SegformerFeatureExtractor.from_pretrained(MODEL_NAME)
+        self.model = SegformerForSemanticSegmentation.from_pretrained(MODEL_NAME)
+        self.model.to(self.device)
+        self.model.eval()
 
-    logger.info(f"✅ Model loaded successfully on device: {device}")
-    return model, processor, device
-
-def predict_land_use(image_bytes: bytes) -> Dict[str, float]:
-    """
-    Predicts land use percentages for a given satellite image.
-
-    Args:
-        image_bytes (bytes): The raw byte data of a satellite image.
-
-    Returns:
-        Dict[str, float]: A dictionary with the percentage breakdown of land use.
-    """
-    if not image_bytes:
-        logger.error("predict_land_use called with empty image_bytes")
-        raise ValueError("Input image_bytes cannot be empty.")
-
-    try:
-        # 1. Load model + processor
-        model, processor, device = _get_model_and_processor()
-
-        # 2. Preprocess
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        inputs = processor(images=image, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        # 3. Inference
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs.logits
-            upsampled_logits = torch.nn.functional.interpolate(
-                logits,
-                size=image.size[::-1],  # (height, width)
-                mode="bilinear",
-                align_corners=False,
-            )
-            predicted_mask = upsampled_logits.argmax(dim=1).squeeze().cpu().numpy()
-
-        # 4. Count categories (WorldCover already uses 0–3 classes mapped to your needs)
-        total_pixels = predicted_mask.size
-        if total_pixels == 0:
-            return {"forest": 0.0, "farmland": 0.0, "water_body": 0.0, "habitation_soil": 0.0}
-
-        counts = {
-            "forest": np.count_nonzero(predicted_mask == 0),
-            "farmland": np.count_nonzero(predicted_mask == 1),
-            "water_body": np.count_nonzero(predicted_mask == 2),
-            "habitation_soil": np.count_nonzero(predicted_mask == 3),
+        # Mapping from ESA WorldCover's 11 classes (indices 0..10) to project categories (0..3)
+        # forest (0): Tree cover, Shrubland, Grassland
+        # farmland (1): Cropland
+        # water_body (2): Permanent water bodies, Herbaceous wetland, Mangroves, Moss and lichen, Snow and ice
+        # habitation_soil (3): Built-up, Bare / sparse vegetation
+        self.esa_to_project_category: Dict[int, int] = {
+            0: 0,  # Tree cover → forest
+            1: 0,  # Shrubland → forest
+            2: 0,  # Grassland → forest
+            3: 1,  # Cropland → farmland
+            4: 3,  # Built-up → habitation_soil
+            5: 3,  # Bare / sparse vegetation → habitation_soil
+            6: 2,  # Snow and ice → water_body
+            7: 2,  # Permanent water bodies → water_body
+            8: 2,  # Herbaceous wetland → water_body
+            9: 2,  # Mangroves → water_body
+            10: 2,  # Moss and lichen → water_body
         }
 
-        percentages = {k: round((v / total_pixels) * 100, 2) for k, v in counts.items()}
-        logger.info(f"Classification successful: {percentages}")
-        return percentages
+        self.project_categories: Dict[int, str] = {
+            0: "forest",
+            1: "farmland",
+            2: "water_body",
+            3: "habitation_soil",
+        }
 
-    except Exception as e:
-        logger.error(f"An error occurred during land use prediction: {e}", exc_info=True)
-        return {"error": "Failed to classify image due to an internal error."}
+    def classify_image(self, image_bytes: bytes) -> Tuple[np.ndarray, Dict[str, int]]:
+        """Classify raw image bytes into the 4 categories.
+
+        Returns a tuple of (mapped_mask, category_counts).
+        - mapped_mask: 2D ndarray of shape (H, W) with values in {0,1,2,3}
+        - category_counts: dict mapping category name → pixel count
+        """
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        inputs = self.feature_extractor(images=image, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            logits = outputs.logits  # [batch, num_labels, h, w]
+
+        # Upsample logits to the original image size
+        upsampled_logits = F.interpolate(
+            logits,
+            size=(image.height, image.width),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+        # Predicted class per pixel (assumes model outputs ESA-like 11 classes indexed 0..10)
+        predicted_mask = upsampled_logits.argmax(dim=1)[0].detach().cpu().numpy().astype(np.int32)
+
+        # Map ESA classes to project categories
+        mapped_mask = np.zeros_like(predicted_mask, dtype=np.uint8)
+        for esa_id, proj_id in self.esa_to_project_category.items():
+            mapped_mask[predicted_mask == esa_id] = proj_id
+
+        # Count pixels per project category
+        category_counts: Dict[str, int] = {}
+        for proj_id, name in self.project_categories.items():
+            category_counts[name] = int((mapped_mask == proj_id).sum())
+
+        return mapped_mask, category_counts
+
+    # Optional helper for examples
+    def get_category_info(self) -> Dict[int, str]:
+        return dict(self.project_categories)
+
+
+_GLOBAL_CLASSIFIER: LandUseClassifier | None = None
+
+
+def _get_or_create_classifier() -> LandUseClassifier:
+    global _GLOBAL_CLASSIFIER
+    if _GLOBAL_CLASSIFIER is None:
+        _GLOBAL_CLASSIFIER = LandUseClassifier()
+    return _GLOBAL_CLASSIFIER
+
+
+def predict_land_use(image_bytes: bytes) -> Dict[str, float]:
+    """Predict land use percentages per category from raw image bytes.
+
+    Returns a flat dict like:
+      {"forest": 61.23, "farmland": 20.45, "water_body": 5.67, "habitation_soil": 12.65}
+    """
+    classifier = _get_or_create_classifier()
+    _, counts = classifier.classify_image(image_bytes)
+
+    total_pixels = sum(counts.values()) or 1
+    percentages = {
+        name: round((count / total_pixels) * 100.0, 2)
+        for name, count in counts.items()
+    }
+    return percentages
+
+
+# Backwards-compatible alias used by some examples
+def classify_land_use(image_bytes: bytes) -> Dict[str, float]:
+    return predict_land_use(image_bytes)
+
