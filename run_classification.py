@@ -6,17 +6,12 @@ Usage: python run_classification.py [image_path]
 
 import sys
 import os
-from fra_service.ml_service import LandUseClassifier
+from fra_service.ml_service import predict_land_use
 
 def main():
     print("VanDisha FRA Atlas - Land Use Classification")
     print("=" * 45)
-    
-    # Initialize classifier
-    print("Loading model...")
-    classifier = LandUseClassifier()
-    print("✅ Model loaded successfully!")
-    
+
     # Check if image path provided
     if len(sys.argv) > 1:
         image_path = sys.argv[1]
@@ -26,20 +21,15 @@ def main():
                 with open(image_path, 'rb') as f:
                     image_bytes = f.read()
                 
-                # Classify
-                mapped_mask, category_counts = classifier.classify_image(image_bytes)
+                # Classify using predict_land_use
+                result = predict_land_use(image_bytes)
                 
                 # Results
                 print("\n📊 Classification Results:")
                 print("-" * 30)
-                total_pixels = mapped_mask.size
-                for category, count in category_counts.items():
-                    percentage = (count / total_pixels) * 100
-                    print(f"  {category}: {count:,} pixels ({percentage:.2f}%)")
-                
-                print(f"\n📐 Mask shape: {mapped_mask.shape}")
-                print(f"🔢 Unique categories: {sorted(category_counts.keys())}")
-                
+                for category, percentage in result.items():
+                    print(f"  {category}: {percentage:.2f}%")
+                    
             except Exception as e:
                 print(f"❌ Error processing image: {e}")
         else:
@@ -51,8 +41,7 @@ def main():
         print("\n📝 Example:")
         print("  python run_classification.py satellite_image.jpg")
         print("\n💡 Categories:")
-        for cat_id, cat_name in classifier.get_category_info().items():
-            print(f"  {cat_id}: {cat_name}")
+        print("  forest, farmland, water_body, habitation_soil")
 
 if __name__ == "__main__":
     main()

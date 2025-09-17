@@ -1,6 +1,6 @@
 # VanDisha FRA Atlas - Land Use Classification Module
 
-This module provides functionality to classify satellite images into 4 land use categories using the ESA/WorldCover-SegFormer model from Hugging Face.
+This service classifies satellite images into 4 land use categories using a SegFormer model from Hugging Face.
 
 ## Features
 
@@ -16,24 +16,15 @@ This module provides functionality to classify satellite images into 4 land use 
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## Quick Start (API)
 
-```python
-from fra_service.ml_service import LandUseClassifier
-
-# Initialize classifier
-classifier = LandUseClassifier()
-
-# Load your satellite image
-with open('satellite_image.jpg', 'rb') as f:
-    image_bytes = f.read()
-
-# Classify the image
-mapped_mask, category_counts = classifier.classify_image(image_bytes)
-
-print("Category counts:", category_counts)
-print("Mapped mask shape:", mapped_mask.shape)
-```
+1. Install dependencies: `pip install -r requirements.txt`
+2. Start server: `uvicorn main:app --reload`
+3. POST an image to `/classify/` (multipart form key `file`)
+   Response:
+   ```json
+   {"forest": 61.23, "farmland": 20.45, "water_body": 5.67, "habitation_soil": 12.65}
+   ```
 
 ## Categories
 
@@ -44,44 +35,21 @@ The model maps ESA WorldCover's 10 classes to 4 categories:
 - **2: water_body** - Water bodies, wetlands, snow/ice
 - **3: habitation_soil** - Bare areas, moss/lichen
 
-## API Reference
+## ML Service Reference
 
-### LandUseClassifier
-
-Main class for land use classification.
-
-#### Methods
-
-- `classify_image(image_bytes)`: Classify a satellite image
-- `get_category_info()`: Get category ID to name mapping
-- `preprocess_image(image_bytes)`: Preprocess raw image bytes
-- `run_inference(inputs)`: Run model inference
-- `map_labels(predicted_mask)`: Map 10 classes to 4 categories
-
-### Convenience Function
+`fra_service/ml_service.py` exposes a single function:
 
 ```python
-from fra_service.ml_service import classify_land_use
+from fra_service.ml_service import predict_land_use
 
-mapped_mask, category_counts = classify_land_use(image_bytes)
+with open('image.jpg', 'rb') as f:
+    result = predict_land_use(f.read())
+    # {'forest': 61.23, 'farmland': 20.45, 'water_body': 5.67, 'habitation_soil': 12.65}
 ```
 
 ## Output Format
 
-The `classify_image` method returns:
-
-1. **mapped_mask**: NumPy array with 4 categories (0-3)
-2. **category_counts**: Dictionary with pixel counts per category
-
-Example output:
-```python
-{
-    'forest': 125000,
-    'farmland': 89000, 
-    'water_body': 15000,
-    'habitation_soil': 21000
-}
-```
+The API and `predict_land_use` return a flat JSON/dict with four keys and float percentages rounded to two decimals.
 
 ## Next Steps
 

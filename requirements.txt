@@ -1,7 +1,10 @@
-torch>=1.9.0
-torchvision>=0.10.0
-transformers>=4.20.0
-timm>=0.6.0
-Pillow>=8.3.0
-scikit-image>=0.18.0
-numpy>=1.21.0
+fastapi>=0.104.1
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
+torch
+torchvision
+transformers
+timm
+Pillow
+numpy
